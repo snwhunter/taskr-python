@@ -6,7 +6,6 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from enum import Enum
 import json
-import re
 from typing import Any, Mapping
 
 
@@ -16,7 +15,6 @@ TASK_COLUMNS = (
     "Priority", "Status", "Notes", "Tags",
 )
 VISIBLE_COLUMNS = TASK_COLUMNS[:-1]
-ID_PATTERN = re.compile(r"^\d{12}$")
 
 
 class Status(str, Enum):
@@ -52,8 +50,6 @@ class Task:
             raise ValueError("Task must not be blank")
         if not isinstance(self.status, Status):
             object.__setattr__(self, "status", Status(self.status))
-        if self.id and not ID_PATTERN.fullmatch(self.id):
-            raise ValueError("Task ID must use YYMMDDHHmmSS format")
 
     def with_id(self) -> Task:
         return self if self.id else replace(self, id=creation_timestamp_id())

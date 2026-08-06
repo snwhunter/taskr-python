@@ -1,49 +1,38 @@
-"""Canonical task model and its spreadsheet representation.
-
-``Target`` uses ISO 8601 dates (``YYYY-MM-DD``). ``Priority`` is an integer from
-1 (highest) through 4 (lowest). IDs are UUIDv7 values: UUIDs remain stable when
-rows move, while their leading bits retain the requested millisecond timestamp.
-"""
+"""Taskr's canonical representation of the existing Tasks sheet."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
-from enum import Enum, IntEnum
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timezone
+from enum import Enum
+import json
 import secrets
 import time
 import uuid
 from typing import Any, Mapping
 
 
+# This order is an external contract: it is the order of the existing Sheet.
 TASK_COLUMNS = (
-    "ID", "Category", "Reference", "Task", "Details", "Tags", "Target",
-    "Assigned", "Priority", "Status", "Notes",
+    "ID", "Category", "Reference", "Task", "Details", "Target", "Assigned",
+    "Priority", "Status", "Notes", "Tags",
 )
+VISIBLE_COLUMNS = TASK_COLUMNS[:-1]
 
 
 class Status(str, Enum):
-    NONE = "None"
+    """Values already used by the project; blank is the unstarted state."""
+
+    NONE = ""
     IN_PROGRESS = "InProgress"
     BLOCKED = "Blocked"
     COMPLETE = "Complete"
 
 
-class Priority(IntEnum):
-    HIGH = 1
-    MEDIUM = 2
-    LOW = 3
-    SOMEDAY = 4
-
-
 def timestamp_uuid() -> str:
-    """Return a standards-compatible UUIDv7 (timestamp-based, not a timestamp ID)."""
     milliseconds = int(time.time_ns() // 1_000_000) & ((1 << 48) - 1)
-    value = milliseconds << 80
-    value |= 0x7 << 76
-    value |= secrets.randbits(12) << 64
-    value |= 0b10 << 62
-    value |= secrets.randbits(62)
+    value = milliseconds << 80 | 0x7 << 76 | secrets.randbits(12) << 64
+    value |= 0b10 << 62 | secrets.randbits(62)
     return str(uuid.UUID(int=value))
 
 
@@ -54,48 +43,49 @@ class Task:
     category: str = ""
     reference: str = ""
     details: str = ""
-    tags: str = ""
     target: date | None = None
     assigned: str = ""
-    priority: Priority = Priority.SOMEDAY
+    priority: str = ""
     status: Status = Status.NONE
     notes: str = ""
+    tags: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        if self.id:
-            parsed = uuid.UUID(self.id)
-            if parsed.version != 7:
-                raise ValueError("Task ID must be a UUIDv7")
         if not self.task.strip():
             raise ValueError("Task must not be blank")
+        if not isinstance(self.status, Status):
+            object.__setattr__(self, "status", Status(self.status))
+        if self.id and uuid.UUID(self.id).version != 7:
+            raise ValueError("Task ID must be a UUIDv7")
 
     def with_id(self) -> Task:
-        if self.id:
-            return self
-        values = self.to_record()
-        values["ID"] = timestamp_uuid()
-        return Task.from_record(values)
+        return self if self.id else replace(self, id=timestamp_uuid())
 
     def to_record(self) -> dict[str, str]:
+        tags = json.dumps(dict(self.tags or {}), separators=(",", ":"), sort_keys=True)
         return {
             "ID": self.id, "Category": self.category, "Reference": self.reference,
-            "Task": self.task, "Details": self.details, "Tags": self.tags,
+            "Task": self.task, "Details": self.details,
             "Target": self.target.isoformat() if self.target else "",
-            "Assigned": self.assigned, "Priority": str(int(self.priority)),
-            "Status": self.status.value, "Notes": self.notes,
+            "Assigned": self.assigned, "Priority": self.priority,
+            "Status": self.status.value, "Notes": self.notes, "Tags": tags,
         }
 
     @classmethod
     def from_record(cls, row: Mapping[str, Any]) -> Task:
-        target = str(row.get("Target", "")).strip()
+        raw_tags = row.get("Tags") or "{}"
+        tags = raw_tags if isinstance(raw_tags, Mapping) else json.loads(str(raw_tags))
+        target = str(row.get("Target") or "").strip()
         return cls(
-            id=str(row.get("ID", "")).strip(), task=str(row.get("Task", "")),
-            category=str(row.get("Category", "")), reference=str(row.get("Reference", "")),
-            details=str(row.get("Details", "")), tags=str(row.get("Tags", "")),
-            target=date.fromisoformat(target) if target else None,
-            assigned=str(row.get("Assigned", "")),
-            priority=Priority(int(row.get("Priority") or Priority.SOMEDAY)),
-            status=Status(str(row.get("Status") or Status.NONE.value)),
-            notes=str(row.get("Notes", "")),
+            id=str(row.get("ID") or "").strip(), category=str(row.get("Category") or ""),
+            reference=str(row.get("Reference") or ""), task=str(row.get("Task") or ""),
+            details=str(row.get("Details") or ""), target=date.fromisoformat(target) if target else None,
+            assigned=str(row.get("Assigned") or ""), priority=str(row.get("Priority") or ""),
+            status=Status(str(row.get("Status") or "")), notes=str(row.get("Notes") or ""),
+            tags=dict(tags),
         )
 
+    @classmethod
+    def new(cls, *, user: str, **values: Any) -> Task:
+        tags = {"created_by": user, "source": "python_app", "created_at": datetime.now(timezone.utc).isoformat()}
+        return cls(tags=tags, **values).with_id()

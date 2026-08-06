@@ -1,4 +1,3 @@
-from .task import Priority, Status, Task
+from .task import Status, Task
 
-__all__ = ["Priority", "Status", "Task"]
-
+__all__ = ["Status", "Task"]

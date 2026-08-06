@@ -1,7 +1,10 @@
 /** Spreadsheet-bound API used by the desktop app. */
 const TASK_SHEET = 'Tasks';
+const LOG_SHEET = 'log';
 const TASK_COLUMNS = ['ID', 'Category', 'Reference', 'Task', 'Details', 'Target',
   'Assigned', 'Priority', 'Status', 'Notes', 'Tags'];
+const LOG_COLUMNS = ['Timestamp', 'Action', 'ID', 'Field', 'OldValue', 'NewValue',
+  'User', 'Source'];
 const STATUSES = ['', 'InProgress', 'Blocked', 'Complete'];
 
 function json_(value) {
@@ -33,6 +36,25 @@ function sheet_() {
   return sheet;
 }
 
+function logSheet_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  let sheet = spreadsheet.getSheetByName(LOG_SHEET);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(LOG_SHEET);
+    sheet.getRange(1, 1, 1, LOG_COLUMNS.length).setValues([LOG_COLUMNS]);
+    sheet.setFrozenRows(1);
+  } else {
+    const headers = sheet.getRange(1, 1, 1, LOG_COLUMNS.length).getDisplayValues()[0];
+    if (headers.every(value => value === '')) {
+      sheet.getRange(1, 1, 1, LOG_COLUMNS.length).setValues([LOG_COLUMNS]);
+      sheet.setFrozenRows(1);
+    } else if (headers.join('\u001f') !== LOG_COLUMNS.join('\u001f')) {
+      throw new Error('log headers must exactly match: ' + LOG_COLUMNS.join(', '));
+    }
+  }
+  return sheet;
+}
+
 function rows_() {
   const sheet = sheet_();
   if (sheet.getLastRow() < 2) return [];
@@ -48,14 +70,40 @@ function normalize_(record) {
   if (!result.ID) throw new Error('ID is required');
   if (!result.Task.trim()) throw new Error('Task is required');
   if (!STATUSES.includes(result.Status)) throw new Error('Invalid Status');
-  JSON.parse(result.Tags || '{}');
+  const tags = JSON.parse(result.Tags || '{}');
+  if (!tags || Array.isArray(tags) || typeof tags !== 'object')
+    throw new Error('Tags must be a JSON object');
   return result;
+}
+
+function provenance_(record) {
+  let tags = {};
+  try { tags = JSON.parse(record.Tags || '{}'); } catch (error) {}
+  return {
+    user: String(tags.created_by || tags.updated_by || ''),
+    source: String(tags.source || '')
+  };
+}
+
+function logChange_(action, id, field, oldValue, newValue, record) {
+  const provenance = provenance_(record || {});
+  logSheet_().appendRow([
+    new Date(),
+    action,
+    id,
+    field,
+    oldValue == null ? '' : String(oldValue),
+    newValue == null ? '' : String(newValue),
+    provenance.user,
+    provenance.source
+  ]);
 }
 
 function createTask_(input) {
   const task = normalize_(input.task || {});
   if (rows_().some(row => row.ID === task.ID)) throw new Error('Duplicate ID: ' + task.ID);
   sheet_().appendRow(TASK_COLUMNS.map(name => task[name]));
+  logChange_('Added', task.ID, 'ALL', '', JSON.stringify(task), task);
   return task;
 }
 
@@ -67,11 +115,24 @@ function updateTask_(input) {
   const old = values[index];
   const changes = input.changes || {};
   if (changes.ID && changes.ID !== input.id) throw new Error('ID cannot change');
+
   // Tags are opaque provenance. Omission preserves them; replacement is explicit.
   const updated = normalize_(Object.assign({}, old, changes, {ID: old.ID,
     Tags: Object.prototype.hasOwnProperty.call(changes, 'Tags') ? changes.Tags : old.Tags}));
-  sheet.getRange(index + 2, 1, 1, TASK_COLUMNS.length).setValues([TASK_COLUMNS.map(name => updated[name])]);
+
+  const changedFields = TASK_COLUMNS.filter(name => name !== 'ID' && String(old[name]) !== String(updated[name]));
+  if (!changedFields.length) return updated;
+
+  sheet.getRange(index + 2, 1, 1, TASK_COLUMNS.length)
+    .setValues([TASK_COLUMNS.map(name => updated[name])]);
+
+  changedFields.forEach(name => {
+    logChange_(name === 'Status' && updated.Status === 'Complete' ? 'Completed' : 'Updated',
+      updated.ID, name, old[name], updated[name], updated);
+  });
   return updated;
 }
 
-function completeTask_(input) { return updateTask_({id: input.id, changes: {Status: 'Complete'}}); }
+function completeTask_(input) {
+  return updateTask_({id: input.id, changes: {Status: 'Complete'}});
+}

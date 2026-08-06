@@ -1,38 +1,44 @@
-"""Environment-only configuration; credentials and secrets are never stored here."""
+"""Non-secret local preferences for the Apps Script client."""
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+import json
 import os
+from pathlib import Path
 
 
-@dataclass(frozen=True, slots=True)
-class SheetsConfig:
-    spreadsheet_id: str
-    db_worksheet: str = "db"
-    log_worksheet: str = "log"
-    credentials_file: str | None = None
+def default_path() -> Path:
+    return Path(os.environ.get("TASKR_CONFIG", Path.home() / ".config/taskr/config.json"))
+
+
+@dataclass(slots=True)
+class AppConfig:
+    api_url: str = ""
+    user: str = ""
+    categories: list[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
+    assigned: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_env(cls) -> "SheetsConfig":
-        spreadsheet_id = os.environ.get("TASKR_SPREADSHEET_ID", "").strip()
-        if not spreadsheet_id:
-            raise ValueError("TASKR_SPREADSHEET_ID is required")
+    def load(cls, path: Path | None = None) -> AppConfig:
+        path = path or default_path()
+        data = json.loads(path.read_text()) if path.exists() else {}
+        data["api_url"] = os.environ.get("TASKR_API_URL", data.get("api_url", ""))
+        data["user"] = os.environ.get("TASKR_USER", data.get("user", ""))
         return cls(
-            spreadsheet_id=spreadsheet_id,
-            db_worksheet=os.environ.get("TASKR_DB_WORKSHEET", "db"),
-            log_worksheet=os.environ.get("TASKR_LOG_WORKSHEET", "log"),
-            credentials_file=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or None,
+            api_url=data.get("api_url", ""), user=data.get("user", ""),
+            categories=list(data.get("categories", [])), references=list(data.get("references", [])),
+            assigned=list(data.get("assigned", [])),
         )
 
-    def open_worksheets(self):
-        """Authenticate with ADC/a service-account file and return ``(db, log)``."""
-        import gspread
+    def remember(self, category: str, reference: str, assigned: str) -> None:
+        for collection, value in ((self.categories, category), (self.references, reference), (self.assigned, assigned)):
+            if value and value not in collection:
+                collection.append(value)
+                collection.sort(key=str.casefold)
 
-        if self.credentials_file:
-            client = gspread.service_account(filename=self.credentials_file)
-        else:
-            from google.auth import default
-
-            credentials, _ = default(scopes=gspread.auth.DEFAULT_SCOPES)
-            client = gspread.authorize(credentials)
-        book = client.open_by_key(self.spreadsheet_id)
-        return book.worksheet(self.db_worksheet), book.worksheet(self.log_worksheet)
+    def save(self, path: Path | None = None) -> None:
+        path = path or default_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(asdict(self), indent=2) + "\n")

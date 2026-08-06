@@ -1,18 +1,24 @@
 from datetime import date
-import uuid
+import json
 
 import pytest
 
-from taskr.models.task import Priority, Status, Task
+from taskr.app import target_date
+from taskr.models.task import TASK_COLUMNS, Status, Task
 
 
-def test_task_round_trip_and_timestamp_uuid():
-    task = Task(task="Ship", target=date(2026, 8, 6), priority=Priority.HIGH, status=Status.IN_PROGRESS).with_id()
-    assert uuid.UUID(task.id).version == 7
-    assert Task.from_record(task.to_record()) == task
+def test_exact_schema_and_round_trip_preserves_tags():
+    assert TASK_COLUMNS == ("ID", "Category", "Reference", "Task", "Details", "Target", "Assigned", "Priority", "Status", "Notes", "Tags")
+    made = Task.new(user="alex", task="Ship", target=date(2026, 8, 6))
+    record = made.to_record()
+    assert record["Priority"] == record["Status"] == record["Notes"] == ""
+    assert json.loads(record["Tags"])["source"] == "python_app"
+    assert Task.from_record(record) == made
 
 
-def test_rejects_non_v7_id():
-    with pytest.raises(ValueError, match="UUIDv7"):
-        Task(task="Bad", id=str(uuid.uuid4()))
-
+def test_dates_and_validation():
+    assert target_date("EOD", date(2026, 8, 6)) == date(2026, 8, 6)
+    assert target_date("EOW", date(2026, 8, 6)) == date(2026, 8, 9)
+    assert target_date("EOM", date(2026, 8, 6)) == date(2026, 8, 31)
+    with pytest.raises(ValueError): Task(task=" ")
+    with pytest.raises(ValueError): Task(task="x", status="Done")

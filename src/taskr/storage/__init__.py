@@ -1,4 +1,3 @@
-from .google_sheets import AuditWriteError, GoogleSheetsTaskStore
+from .apps_script import AppsScriptError, AppsScriptTaskStore
 
-__all__ = ["AuditWriteError", "GoogleSheetsTaskStore"]
-
+__all__ = ["AppsScriptError", "AppsScriptTaskStore"]

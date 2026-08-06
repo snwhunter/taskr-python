@@ -5,13 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "taskr"
 version = "0.1.0"
-description = "Task storage backed by Google Sheets"
+description = "Desktop task app backed by a Google Apps Script web app"
 requires-python = ">=3.11"
-dependencies = ["gspread>=6.0,<7"]
+dependencies = []
+
+[project.scripts]
+taskr = "taskr.app:main"
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-

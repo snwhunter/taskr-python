@@ -3,8 +3,7 @@ const TASK_SHEET = 'Tasks';
 const LOG_SHEET = 'log';
 const TASK_COLUMNS = ['ID', 'Category', 'Reference', 'Task', 'Details', 'Target',
   'Assigned', 'Priority', 'Status', 'Notes', 'Tags'];
-const LOG_COLUMNS = ['Timestamp', 'Action', 'ID', 'Field', 'OldValue', 'NewValue',
-  'User', 'Source'];
+const LOG_COLUMNS = ['Timestamp', 'Source', 'Message', 'Data'];
 const STATUSES = ['', 'InProgress', 'Blocked', 'Complete'];
 
 function json_(value) {
@@ -38,21 +37,21 @@ function sheet_() {
 
 function logSheet_() {
   const spreadsheet = SpreadsheetApp.getActive();
-  let sheet = spreadsheet.getSheetByName(LOG_SHEET);
-  if (!sheet) {
-    sheet = spreadsheet.insertSheet(LOG_SHEET);
-    sheet.getRange(1, 1, 1, LOG_COLUMNS.length).setValues([LOG_COLUMNS]);
-    sheet.setFrozenRows(1);
-  } else {
-    const headers = sheet.getRange(1, 1, 1, LOG_COLUMNS.length).getDisplayValues()[0];
-    if (headers.every(value => value === '')) {
-      sheet.getRange(1, 1, 1, LOG_COLUMNS.length).setValues([LOG_COLUMNS]);
-      sheet.setFrozenRows(1);
-    } else if (headers.join('\u001f') !== LOG_COLUMNS.join('\u001f')) {
-      throw new Error('log headers must exactly match: ' + LOG_COLUMNS.join(', '));
-    }
-  }
+  const sheet = spreadsheet.getSheetByName(LOG_SHEET);
+  if (!sheet) throw new Error('Missing worksheet: ' + LOG_SHEET);
+  const headers = sheet.getRange(1, 1, 1, LOG_COLUMNS.length).getDisplayValues()[0];
+  if (headers.join('\u001f') !== LOG_COLUMNS.join('\u001f'))
+    throw new Error('log headers must exactly match: ' + LOG_COLUMNS.join(', '));
   return sheet;
+}
+
+function trackerlog_(source, message, data) {
+  logSheet_().appendRow([
+    new Date(),
+    String(source || 'taskr-python'),
+    String(message || ''),
+    data == null ? '' : JSON.stringify(data)
+  ]);
 }
 
 function rows_() {
@@ -76,34 +75,20 @@ function normalize_(record) {
   return result;
 }
 
-function provenance_(record) {
-  let tags = {};
-  try { tags = JSON.parse(record.Tags || '{}'); } catch (error) {}
-  return {
-    user: String(tags.created_by || tags.updated_by || ''),
-    source: String(tags.source || '')
-  };
-}
-
-function logChange_(action, id, field, oldValue, newValue, record) {
-  const provenance = provenance_(record || {});
-  logSheet_().appendRow([
-    new Date(),
-    action,
-    id,
-    field,
-    oldValue == null ? '' : String(oldValue),
-    newValue == null ? '' : String(newValue),
-    provenance.user,
-    provenance.source
-  ]);
+function sourceFrom_(record) {
+  try {
+    const tags = JSON.parse(record.Tags || '{}');
+    return String(tags.source || 'taskr-python');
+  } catch (error) {
+    return 'taskr-python';
+  }
 }
 
 function createTask_(input) {
   const task = normalize_(input.task || {});
   if (rows_().some(row => row.ID === task.ID)) throw new Error('Duplicate ID: ' + task.ID);
   sheet_().appendRow(TASK_COLUMNS.map(name => task[name]));
-  logChange_('Added', task.ID, 'ALL', '', JSON.stringify(task), task);
+  trackerlog_(sourceFrom_(task), 'Added', {id: task.ID, task: task});
   return task;
 }
 
@@ -126,9 +111,14 @@ function updateTask_(input) {
   sheet.getRange(index + 2, 1, 1, TASK_COLUMNS.length)
     .setValues([TASK_COLUMNS.map(name => updated[name])]);
 
-  changedFields.forEach(name => {
-    logChange_(name === 'Status' && updated.Status === 'Complete' ? 'Completed' : 'Updated',
-      updated.ID, name, old[name], updated[name], updated);
+  const message = changedFields.length === 1 && changedFields[0] === 'Status' && updated.Status === 'Complete'
+    ? 'Completed'
+    : 'Updated';
+  trackerlog_(sourceFrom_(updated), message, {
+    id: updated.ID,
+    changedFields: changedFields,
+    before: old,
+    after: updated
   });
   return updated;
 }

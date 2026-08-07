@@ -31,6 +31,10 @@ def default_path() -> Path:
     return Path(os.environ.get("TASKR_CONFIG", Path.home() / ".config/taskr/config.json"))
 
 
+def default_cache_path() -> Path:
+    return Path(os.environ.get("TASKR_CACHE", Path.home() / ".local/share/taskr/tasks.sqlite3"))
+
+
 @dataclass(slots=True)
 class AppConfig:
     api_url: str = ""

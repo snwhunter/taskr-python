@@ -2,8 +2,9 @@
 
 Taskr is a small Tk desktop client for an existing Google Sheet. Python never
 receives Google credentials: it calls a spreadsheet-bound Google Apps Script web
-app over HTTPS. No local task database is used. Only non-secret preferences and
-autocomplete history are stored locally.
+app over HTTPS. A local SQLite cache makes reads and edits immediate, while a
+background sync keeps the Sheet authoritative and preserves queued edits during
+temporary network failures.
 
 The window title includes a launch version in `YYMMDDHHmmSS` format, making the
 running instance straightforward to identify in screenshots and support notes.
@@ -52,6 +53,8 @@ Python 3.11+ and Tk are required. Install and run:
 python -m pip install -e .
 export TASKR_API_URL='https://script.google.com/macros/s/.../exec'
 export TASKR_USER='your-name'
+# Optional: override ~/.local/share/taskr/tasks.sqlite3
+export TASKR_CACHE='/path/to/tasks.sqlite3'
 python -m taskr
 ```
 
@@ -84,3 +87,8 @@ columns are combined. Each tab's name and column selections are remembered in
 `Tags` object. A parent can be chosen from its row or the pull-down, and visible
 children are nested below their parent. Task, Details, and Notes remain
 left-aligned while the other columns are centered.
+
+The toolbar shows whether synchronization is running, when it last succeeded,
+or whether the app is offline and has pending changes. Refresh and every local
+edit trigger a background sync; the UI continues to use the SQLite cache while
+the Apps Script request is in flight.

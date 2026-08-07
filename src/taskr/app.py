@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import queue
 import threading
 import tkinter as tk
@@ -63,6 +63,76 @@ def add_task_filter_value(view: ViewConfig, column: str) -> str:
     return selected[0] if len(selected) == 1 else ""
 
 
+def appended_note(existing: str, addition: str, user: str, now: datetime | None = None) -> str:
+    """Append an attributed, locally timestamped entry to a Notes value."""
+    stamp = (now or datetime.now()).strftime("%Y-%m-%d %H:%M")
+    entry = f"[{user or 'Unknown'} {stamp}] {addition}"
+    return f"{existing.rstrip()}\n{entry}" if existing.strip() else entry
+
+
+class NotesEditDialog(tk.Toplevel):
+    """Offer explicit replace and attributed-append actions for Notes."""
+
+    def __init__(self, parent: tk.Misc, initial: str, user: str) -> None:
+        super().__init__(parent)
+        self.result: tuple[str, str] | None = None
+        self.initial, self.user = initial, user
+        self.title("Edit notes"); self.transient(parent.winfo_toplevel()); self.grab_set()
+        body = ttk.Frame(self, padding=12); body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Notes").pack(anchor="w")
+        self.editor = tk.Text(body, width=64, height=10, wrap="word")
+        self.editor.pack(fill="both", expand=True, pady=(4, 10)); self.editor.insert("1.0", initial)
+        actions = ttk.Frame(body); actions.pack(fill="x")
+        ttk.Button(actions, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(actions, text="Append edit", command=self.append).pack(side="right", padx=6)
+        ttk.Button(actions, text="Replace note", command=self.replace).pack(side="right")
+        self.editor.focus_set()
+
+    def replace(self) -> None:
+        self.result = ("replace", self.editor.get("1.0", "end-1c"))
+        self.destroy()
+
+    def append(self) -> None:
+        addition = self.editor.get("1.0", "end-1c")
+        # When the original text is still present, treat only newly entered
+        # text as the append payload. Selecting all and typing also works.
+        if addition.startswith(self.initial): addition = addition[len(self.initial):].lstrip("\n")
+        if not addition.strip():
+            messagebox.showinfo("Append notes", "Enter text to append.", parent=self); return
+        self.result = ("append", addition)
+        self.destroy()
+
+    @classmethod
+    def choose(cls, parent: tk.Misc, initial: str, user: str) -> tuple[str, str] | None:
+        dialog = cls(parent, initial, user); parent.wait_window(dialog); return dialog.result
+
+
+class ColumnVisibilityDialog(tk.Toplevel):
+    """Select the columns displayed by one view."""
+
+    def __init__(self, parent: ViewPane) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.title("Show / hide columns"); self.transient(parent.winfo_toplevel()); self.grab_set()
+        body = ttk.Frame(self, padding=12); body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Columns shown in this view").pack(anchor="w", pady=(0, 6))
+        self.values: dict[str, tk.BooleanVar] = {}
+        visible = set(parent.settings.visible_columns)
+        for column in VISIBLE_COLUMNS:
+            value = tk.BooleanVar(value=column in visible); self.values[column] = value
+            ttk.Checkbutton(body, text=column, variable=value).pack(anchor="w")
+        actions = ttk.Frame(body); actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(actions, text="Apply", command=self.accept).pack(side="right", padx=6)
+
+    def accept(self) -> None:
+        selected = [name for name in VISIBLE_COLUMNS if self.values[name].get()]
+        if not selected:
+            messagebox.showinfo("Columns", "Show at least one column.", parent=self); return
+        self.parent.settings.visible_columns = selected
+        self.parent.apply_visible_columns(); self.parent.app.save_views(); self.destroy()
+
+
 class ColumnFilterDialog(tk.Toplevel):
     """Spreadsheet-style, searchable checkbox filter for one table column."""
 
@@ -110,18 +180,33 @@ class ViewPane(ttk.Frame):
     def __init__(self, app: TaskrApp, notebook: ttk.Notebook, settings: ViewConfig) -> None:
         super().__init__(notebook, padding=8)
         self.app, self.settings = app, settings
-        self.table = ttk.Treeview(self, columns=TABLE_COLUMNS, show="tree headings", selectmode="browse")
+        self.table = ttk.Treeview(self, columns=TABLE_COLUMNS, show="tree headings", selectmode="extended")
         self.table.heading("#0", text="Task", command=lambda: self.open_filter("Task"))
         self.table.column("#0", width=240, anchor="w")
         for name in TABLE_COLUMNS:
             self.table.heading(name, text=name, command=lambda column=name: self.open_filter(column))
             self.table.column(name, width=100, anchor="w" if name in ("Details", "Notes") else "center")
         self.table.pack(fill="both", expand=True, pady=8)
+        self.apply_visible_columns()
         self.table.bind("<Double-1>", self.edit_cell)
         buttons = ttk.Frame(self); buttons.pack(fill="x")
         ttk.Button(buttons, text="Refresh", command=app.refresh).pack(side="left")
+        ttk.Button(buttons, text="Columns…", command=lambda: ColumnVisibilityDialog(self)).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Edit selected…", command=self.edit_selected).pack(side="left")
         ttk.Button(buttons, text="Set parent…", command=self.set_parent).pack(side="right")
         ttk.Button(buttons, text="Complete task", command=self.complete).pack(side="right", padx=6)
+
+    def apply_visible_columns(self) -> None:
+        valid = [name for name in VISIBLE_COLUMNS if name in self.settings.visible_columns]
+        if not valid:
+            valid = ["Task"]
+            self.settings.visible_columns = valid
+        visible = set(valid)
+        self.table.configure(displaycolumns=[name for name in TABLE_COLUMNS if name in visible])
+        if "Task" in visible:
+            self.table.configure(show="tree headings"); self.table.column("#0", width=240, stretch=True)
+        else:
+            self.table.configure(show="headings"); self.table.column("#0", width=0, stretch=False)
 
     def open_filter(self, column: str) -> None:
         values = sorted({task.to_record()[column] for task in self.app.tasks}, key=str.casefold)
@@ -178,19 +263,48 @@ class ViewPane(ttk.Frame):
         selected = self.table.selection()
         return next((task for task in self.app.tasks if selected and task.id == selected[0]), None)
 
+    def selected_tasks(self) -> list[Task]:
+        selected = set(self.table.selection())
+        return [task for task in self.app.tasks if task.id in selected]
+
     def edit_cell(self, event: tk.Event) -> None:
         task_id, column = self.table.identify_row(event.y), self.table.identify_column(event.x)
         if not task_id or not column: return
-        name = "Task" if column == "#0" else TABLE_COLUMNS[int(column[1:]) - 1]
+        displayed = [name for name in TABLE_COLUMNS if name in self.settings.visible_columns]
+        name = "Task" if column == "#0" else displayed[int(column[1:]) - 1]
         if name == "ID": return
         task = next(item for item in self.app.tasks if item.id == task_id)
-        value = simpledialog.askstring("Edit task", name, initialvalue=task.to_record()[name], parent=self)
-        if value is None: return
-        converted: object = value
+        tasks = self.selected_tasks() if task_id in self.table.selection() else [task]
+        self._edit_tasks(tasks, name, task.to_record()[name])
+
+    def edit_selected(self) -> None:
+        tasks = self.selected_tasks()
+        if not tasks:
+            messagebox.showinfo("Edit tasks", "Select one or more tasks first."); return
+        choices = ", ".join(name for name in VISIBLE_COLUMNS if name != "ID")
+        name = simpledialog.askstring("Edit selected tasks", f"Column to edit:\n{choices}", parent=self)
+        if not name: return
+        name = next((item for item in VISIBLE_COLUMNS if item.casefold() == name.strip().casefold()), "")
+        if not name or name == "ID":
+            messagebox.showerror("Edit tasks", "Enter one of the listed column names."); return
+        self._edit_tasks(tasks, name, tasks[0].to_record()[name])
+
+    def _edit_tasks(self, tasks: list[Task], name: str, initial: str) -> None:
+        note_edit = NotesEditDialog.choose(self, initial, self.app.config.user) if name == "Notes" else None
+        value = (None if name == "Notes" else
+                 simpledialog.askstring("Edit tasks" if len(tasks) > 1 else "Edit task",
+                                        name, initialvalue=initial, parent=self))
+        if (name == "Notes" and note_edit is None) or (name != "Notes" and value is None): return
+        converted: object = note_edit[1] if note_edit else value
         try:
             if name == "Target": converted = date.fromisoformat(value) if value else None
             if name == "Status": converted = Status(value)
-            self.app.store.update(replace(task, **{name.lower(): converted})); self.app.refresh()
+            for selected_task in tasks:
+                selected_value = converted
+                if name == "Notes" and note_edit and note_edit[0] == "append":
+                    selected_value = appended_note(selected_task.notes, note_edit[1], self.app.config.user)
+                self.app.store.update(replace(selected_task, **{name.lower(): selected_value}))
+            self.app.refresh()
         except Exception as error: messagebox.showerror("Update failed", str(error))
 
     def complete(self) -> None:

@@ -20,3 +20,10 @@ def test_five_default_views_and_view_configuration_are_persisted(tmp_path):
                                column_filters={"Assigned": ["Me", "Sam"], "Priority": ["High"]})]
     config.save(path)
     assert AppConfig.load(path).views == config.views
+
+
+def test_visible_columns_are_saved_per_view(tmp_path):
+    path = tmp_path / "config.json"
+    config = AppConfig(views=[ViewConfig(name="Compact", visible_columns=["Task", "Status"])])
+    config.save(path)
+    assert AppConfig.load(path).views[0].visible_columns == ["Task", "Status"]

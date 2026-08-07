@@ -21,6 +21,11 @@ class ViewConfig:
     # Keys are sheet column names and values are the values checked in that
     # column's table filter.  Missing keys mean that the column is unfiltered.
     column_filters: dict[str, list[str]] = field(default_factory=dict)
+    # The UI normalizes an empty or stale setting to at least the Task column.
+    visible_columns: list[str] = field(default_factory=lambda: [
+        "ID", "Category", "Reference", "Task", "Details", "Target",
+        "Assigned", "Priority", "Status", "Notes",
+    ])
 
 
 def default_views() -> list[ViewConfig]:

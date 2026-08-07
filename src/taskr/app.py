@@ -31,7 +31,7 @@ def target_date(kind: str, today: date | None = None) -> date | None:
     return None
 
 
-def task_matches(task: Task, view: ViewConfig, *, ignore: frozenset[str] = frozenset()) -> bool:
+def task_matches(task: Task, view: ViewConfig) -> bool:
     """Return whether a task belongs in a configured view."""
     try:
         start = date.fromisoformat(view.date_from) if view.date_from else None
@@ -39,23 +39,11 @@ def task_matches(task: Task, view: ViewConfig, *, ignore: frozenset[str] = froze
     except ValueError as error:
         raise ValueError("Dates must use YYYY-MM-DD.") from error
     return not (
-        ("category" not in ignore and view.category and task.category != view.category)
-        or ("reference" not in ignore and view.reference and task.reference != view.reference)
-        or ("status" not in ignore and view.status and task.status.value != view.status)
-        or ("date_range" not in ignore and task.target
-            and ((start and task.target < start) or (end and task.target > end)))
+        (view.category and task.category != view.category)
+        or (view.reference and task.reference != view.reference)
+        or (view.status and task.status.value != view.status)
+        or (task.target and ((start and task.target < start) or (end and task.target > end)))
     )
-
-
-def available_filter_options(tasks: list[Task], view: ViewConfig, field: str) -> list[str]:
-    """Return Excel-style choices constrained by all of the other filters."""
-    ignored = "date_range" if field in {"date_from", "date_to"} else field
-    candidates = [task for task in tasks if task_matches(task, view, ignore=frozenset({ignored}))]
-    if field == "category": values = (task.category for task in candidates)
-    elif field == "reference": values = (task.reference for task in candidates)
-    elif field == "status": values = (task.status.value for task in candidates)
-    else: values = (task.target.isoformat() for task in candidates if task.target)
-    return [""] + sorted({value for value in values if value}, key=str.casefold)
 
 
 class ViewPane(ttk.Frame):
@@ -63,17 +51,19 @@ class ViewPane(ttk.Frame):
         super().__init__(notebook, padding=8)
         self.app, self.settings = app, settings
         filters = ttk.Frame(self); filters.pack(fill="x")
-        choices = (("Category", "category"), ("Reference", "reference"),
-                   ("From", "date_from"), ("To", "date_to"), ("Status", "status"))
+        choices = (
+            ("Category", "category", app.config.categories),
+            ("Reference", "reference", app.config.references),
+            ("From", "date_from", ()), ("To", "date_to", ()),
+            ("Status", "status", [item.value for item in Status]),
+        )
         self.variables: dict[str, tk.StringVar] = {}
-        self.filter_boxes: dict[str, ttk.Combobox] = {}
-        for label, field in choices:
+        for label, field, values in choices:
             ttk.Label(filters, text=label).pack(side="left")
             variable = tk.StringVar(value=getattr(settings, field)); self.variables[field] = variable
-            widget = ttk.Combobox(filters, textvariable=variable, values=("",), width=12,
-                                  state="readonly")
-            self.filter_boxes[field] = widget
+            widget = ttk.Combobox(filters, textvariable=variable, values=values, width=12)
             widget.pack(side="left", padx=(2, 7)); widget.bind("<<ComboboxSelected>>", self.apply)
+            widget.bind("<Return>", self.apply); widget.bind("<FocusOut>", self.apply)
         ttk.Button(filters, text="Rename", command=self.rename).pack(side="right")
         self.table = ttk.Treeview(self, columns=VISIBLE_COLUMNS, show="tree headings", selectmode="browse")
         self.table.heading("#0", text=""); self.table.column("#0", width=28, stretch=False)
@@ -98,10 +88,7 @@ class ViewPane(ttk.Frame):
 
     def render(self) -> None:
         self.table.delete(*self.table.get_children())
-        try:
-            for field, box in self.filter_boxes.items():
-                box["values"] = available_filter_options(self.app.tasks, self.settings, field)
-            visible = [task for task in self.app.tasks if task_matches(task, self.settings)]
+        try: visible = [task for task in self.app.tasks if task_matches(task, self.settings)]
         except ValueError as error: messagebox.showerror("Invalid filter", str(error)); return
         ids = {task.id for task in visible}
         pending = list(visible)

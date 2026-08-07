@@ -76,9 +76,7 @@ and Notes and provenance in Tags.
 The app starts with five task views. Add/remove views, rename each tab, and set
 independent Category, Reference, inclusive Target-date, and Status filters. Tab
 names and filters are remembered in `config.json`. Tasks with blank Target remain
-visible through date filtering. Like Excel filters, each drop-down only offers
-values that remain available after applying the other filters in that view.
-Double-click a table cell to edit it, or select a
+visible through date filtering. Double-click a table cell to edit it, or select a
 row and use **Complete task**. **Set parent…** stores the selected parent ID in
 the child's `Tags` object; visible children are nested below their parent and
 shown in italics.

@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from taskr.app import available_filter_options, target_date, task_matches, window_title
+from taskr.app import target_date, task_matches, window_title
 from taskr.models.task import TASK_COLUMNS, Status, Task
 from taskr.storage.config import ViewConfig
 
@@ -38,15 +38,3 @@ def test_configured_view_filters_and_parent_tag_round_trip():
     assert Task.from_record(task.to_record()).tags["parent"] == "parent-id"
     view.status = "Complete"
     assert not task_matches(task, view)
-
-
-def test_filter_options_are_constrained_by_the_other_active_filters():
-    tasks = [
-        Task(task="A", category="Work", reference="AC", target=date(2026, 8, 6), status=Status.BLOCKED),
-        Task(task="B", category="Work", reference="BD", target=date(2026, 8, 7), status=Status.COMPLETE),
-        Task(task="C", category="Home", reference="AC", target=date(2026, 8, 8), status=Status.COMPLETE),
-    ]
-    view = ViewConfig(category="Work", reference="AC")
-    assert available_filter_options(tasks, view, "reference") == ["", "AC", "BD"]
-    assert available_filter_options(tasks, view, "status") == ["", "Blocked"]
-    assert available_filter_options(tasks, view, "date_from") == ["", "2026-08-06"]

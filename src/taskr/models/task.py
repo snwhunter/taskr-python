@@ -80,5 +80,7 @@ class Task:
 
     @classmethod
     def new(cls, *, user: str, **values: Any) -> Task:
+        supplied_tags = dict(values.pop("tags", None) or {})
         tags = {"created_by": user, "source": "python_app", "created_at": datetime.now(timezone.utc).isoformat()}
+        tags.update(supplied_tags)
         return cls(tags=tags, **values).with_id()

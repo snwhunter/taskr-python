@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from taskr.app import target_date, task_matches, window_title
+from taskr.app import add_task_filter_value, target_date, task_matches, window_title
 from taskr.models.task import TASK_COLUMNS, Status, Task
 from taskr.storage.config import ViewConfig
 
@@ -47,3 +47,17 @@ def test_column_filters_are_combined_and_support_blank_values():
     }))
     assert not task_matches(task, ViewConfig(column_filters={"Assigned": ["Lee"]}))
     assert not task_matches(task, ViewConfig(column_filters={"Priority": []}))
+
+
+def test_add_tasks_uses_unambiguous_active_view_category_and_reference():
+    view = ViewConfig(category="Work", column_filters={"Reference": ["R1"]})
+    assert add_task_filter_value(view, "Category") == "Work"
+    assert add_task_filter_value(view, "Reference") == "R1"
+    view.column_filters["Reference"] = ["R1", "R2"]
+    assert add_task_filter_value(view, "Reference") == ""
+
+
+def test_new_task_merges_parent_with_provenance_tags():
+    task = Task.new(user="alex", task="Child", tags={"parent": "parent-id"})
+    assert task.tags["parent"] == "parent-id"
+    assert task.tags["created_by"] == "alex"

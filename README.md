@@ -70,8 +70,10 @@ Alternatively create `~/.config/taskr/config.json`:
 Use **Add Tasks** to open the task-entry popup. There is no separate submit
 button: selecting EOD, EOW, EOM, a future date, or no date creates the task.
 Category, Reference, and Assigned histories are saved to the config file for the
-editable autocomplete boxes. Newly created tasks have blank Priority, Status,
-and Notes and provenance in Tags.
+editable autocomplete boxes. Category and Reference are prefilled when the
+active view has an unambiguous filter for them. The optional Parent pull-down
+stores the chosen task's ID in Tags. Newly created tasks have blank Priority,
+Status, and Notes and provenance in Tags.
 
 The app starts with five task views. The **+ View**, **− View**, and **Rename**
 controls are grouped across the top. Click the dropdown marker in any table
@@ -79,5 +81,6 @@ heading to search and select that column's visible values; filters from multiple
 columns are combined. Each tab's name and column selections are remembered in
 `config.json`. Double-click a table cell to edit it, or select a row and use
 **Complete task**. **Set parent…** stores the selected parent ID in the child's
-`Tags` object; visible children are nested below their parent and shown in
-italics.
+`Tags` object. A parent can be chosen from its row or the pull-down, and visible
+children are nested below their parent. Task, Details, and Notes remain
+left-aligned while the other columns are centered.

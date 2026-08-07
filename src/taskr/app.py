@@ -17,6 +17,7 @@ from taskr.storage.config import AppConfig, ViewConfig
 # separate release-numbering system while still making a running instance easy
 # to identify in screenshots and support requests.
 APP_VERSION = creation_timestamp_id()
+TABLE_COLUMNS = tuple(column for column in VISIBLE_COLUMNS if column != "Task")
 
 
 def window_title(version: str = APP_VERSION) -> str:
@@ -48,6 +49,15 @@ def task_matches(task: Task, view: ViewConfig) -> bool:
     record = task.to_record()
     return all(record.get(column, "") in selected
                for column, selected in view.column_filters.items())
+
+
+def add_task_filter_value(view: ViewConfig, column: str) -> str:
+    """Return an unambiguous Category/Reference value from the active view."""
+    configured = getattr(view, column.lower())
+    if configured:
+        return configured
+    selected = view.column_filters.get(column, [])
+    return selected[0] if len(selected) == 1 else ""
 
 
 class ColumnFilterDialog(tk.Toplevel):
@@ -97,13 +107,13 @@ class ViewPane(ttk.Frame):
     def __init__(self, app: TaskrApp, notebook: ttk.Notebook, settings: ViewConfig) -> None:
         super().__init__(notebook, padding=8)
         self.app, self.settings = app, settings
-        self.table = ttk.Treeview(self, columns=VISIBLE_COLUMNS, show="tree headings", selectmode="browse")
-        self.table.heading("#0", text=""); self.table.column("#0", width=28, stretch=False)
-        for name in VISIBLE_COLUMNS:
+        self.table = ttk.Treeview(self, columns=TABLE_COLUMNS, show="tree headings", selectmode="browse")
+        self.table.heading("#0", text="Task", command=lambda: self.open_filter("Task"))
+        self.table.column("#0", width=240, anchor="w")
+        for name in TABLE_COLUMNS:
             self.table.heading(name, text=name, command=lambda column=name: self.open_filter(column))
-            self.table.column(name, width=100)
-        self.table.column("Task", width=220); self.table.pack(fill="both", expand=True, pady=8)
-        self.table.tag_configure("child", font=("TkDefaultFont", 9, "italic"))
+            self.table.column(name, width=100, anchor="w" if name in ("Details", "Notes") else "center")
+        self.table.pack(fill="both", expand=True, pady=8)
         self.table.bind("<Double-1>", self.edit_cell)
         buttons = ttk.Frame(self); buttons.pack(fill="x")
         ttk.Button(buttons, text="Refresh", command=app.refresh).pack(side="left")
@@ -126,7 +136,7 @@ class ViewPane(ttk.Frame):
     def update_headings(self) -> None:
         for name in VISIBLE_COLUMNS:
             marker = " ▼" if name in self.settings.column_filters else " ▾"
-            self.table.heading(name, text=name + marker)
+            self.table.heading("#0" if name == "Task" else name, text=name + marker)
 
     def rename(self) -> None:
         value = simpledialog.askstring("Rename view", "View name:", initialvalue=self.settings.name, parent=self)
@@ -157,8 +167,8 @@ class ViewPane(ttk.Frame):
         for task, tree_parent in ordered:
             record = task.to_record()
             self.table.insert(tree_parent, "end", iid=task.id,
-                              values=[record[name] for name in VISIBLE_COLUMNS],
-                              tags=("child",) if tree_parent else ())
+                              text=record["Task"],
+                              values=[record[name] for name in TABLE_COLUMNS])
             if tree_parent: self.table.item(tree_parent, open=True)
 
     def selected_task(self) -> Task | None:
@@ -167,8 +177,8 @@ class ViewPane(ttk.Frame):
 
     def edit_cell(self, event: tk.Event) -> None:
         task_id, column = self.table.identify_row(event.y), self.table.identify_column(event.x)
-        if not task_id or column in ("", "#0"): return
-        name = VISIBLE_COLUMNS[int(column[1:]) - 1]
+        if not task_id or not column: return
+        name = "Task" if column == "#0" else TABLE_COLUMNS[int(column[1:]) - 1]
         if name == "ID": return
         task = next(item for item in self.app.tasks if item.id == task_id)
         value = simpledialog.askstring("Edit task", name, initialvalue=task.to_record()[name], parent=self)
@@ -190,17 +200,49 @@ class ViewPane(ttk.Frame):
         task = self.selected_task()
         if not task: messagebox.showinfo("Set parent", "Select a child task first."); return
         candidates = [item for item in self.app.tasks if item.id != task.id]
-        prompt = "Parent task ID (blank removes parent):\n\n" + "\n".join(f"{item.id} — {item.task}" for item in candidates)
-        parent_id = simpledialog.askstring("Set parent", prompt, initialvalue=str((task.tags or {}).get("parent", "")), parent=self)
+        parent_id = ParentTaskDialog.choose(self, candidates, str((task.tags or {}).get("parent", "")))
         if parent_id is None: return
-        parent_id = parent_id.strip()
-        if parent_id and parent_id not in {item.id for item in candidates}:
-            messagebox.showerror("Set parent", "Choose an ID shown in the list."); return
         tags = dict(task.tags or {})
         if parent_id: tags["parent"] = parent_id
         else: tags.pop("parent", None)
         try: self.app.store.update(replace(task, tags=tags)); self.app.refresh()
         except Exception as error: messagebox.showerror("Update failed", str(error))
+
+
+class ParentTaskDialog(tk.Toplevel):
+    """Choose a task from either a compact pull-down or a clickable row list."""
+
+    def __init__(self, parent: tk.Misc, tasks: list[Task], initial: str = "") -> None:
+        super().__init__(parent)
+        self.result: str | None = None
+        self.tasks = tasks
+        self.title("Set parent"); self.transient(parent.winfo_toplevel()); self.grab_set()
+        body = ttk.Frame(self, padding=12); body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Parent task (blank removes parent)").pack(anchor="w")
+        self.labels = [""] + [f"{task.task} — {task.id}" for task in tasks]
+        self.ids = [""] + [task.id for task in tasks]
+        self.choice = ttk.Combobox(body, values=self.labels, state="readonly", width=64)
+        self.choice.pack(fill="x", pady=(4, 10)); self.choice.current(self.ids.index(initial) if initial in self.ids else 0)
+        table = ttk.Treeview(body, columns=("Task", "ID"), show="headings", height=min(10, max(3, len(tasks))))
+        table.heading("Task", text="Task"); table.heading("ID", text="ID")
+        table.column("Task", width=340, anchor="w"); table.column("ID", width=130, anchor="center")
+        for task in tasks: table.insert("", "end", iid=task.id, values=(task.task, task.id))
+        table.pack(fill="both", expand=True)
+        table.bind("<<TreeviewSelect>>", lambda _event: self.choice.current(self.ids.index(table.selection()[0])))
+        table.bind("<Double-1>", lambda _event: self.accept())
+        actions = ttk.Frame(body); actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(actions, text="Set parent", command=self.accept).pack(side="right", padx=6)
+
+    def accept(self) -> None:
+        self.result = self.ids[self.choice.current()]
+        self.destroy()
+
+    @classmethod
+    def choose(cls, parent: tk.Misc, tasks: list[Task], initial: str = "") -> str | None:
+        dialog = cls(parent, tasks, initial)
+        parent.wait_window(dialog)
+        return dialog.result
 
 
 class TaskrApp(ttk.Frame):
@@ -240,19 +282,31 @@ class TaskrApp(ttk.Frame):
         window = tk.Toplevel(self); window.title("Add Tasks"); window.transient(self.winfo_toplevel()); window.grab_set()
         body = ttk.Frame(window, padding=12); body.pack(fill="both", expand=True)
         inputs: dict[str, object] = {}
+        active_view = self.views[self.tabs.index("current")].settings
         for row, (label, values) in enumerate((("Category", self.config.categories), ("Reference", self.config.references), ("Assigned", self.config.assigned))):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
-            box = ttk.Combobox(body, values=values, width=55); box.grid(row=row, column=1, sticky="ew"); inputs[label] = box
-        for row, label in enumerate(("Task", "Details"), 3):
+            filtered = add_task_filter_value(active_view, label) if label in ("Category", "Reference") else ""
+            choices = list(dict.fromkeys(([filtered] if filtered else []) + list(values)))
+            box = ttk.Combobox(body, values=choices, width=55); box.grid(row=row, column=1, sticky="ew")
+            if filtered: box.set(filtered)
+            inputs[label] = box
+        ttk.Label(body, text="Parent").grid(row=3, column=0, sticky="w", pady=4)
+        parent_tasks = [task for task in self.tasks if task_matches(task, active_view)]
+        parent_labels = [""] + [f"{task.task} — {task.id}" for task in parent_tasks]
+        parent = ttk.Combobox(body, values=parent_labels, state="readonly", width=55)
+        parent.grid(row=3, column=1, sticky="ew"); parent.current(0); inputs["Parent"] = parent
+        for row, label in enumerate(("Task", "Details"), 4):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", pady=4)
             widget = tk.Text(body, height=2 if label == "Task" else 5, width=55); widget.grid(row=row, column=1, sticky="ew"); inputs[label] = widget
-        ttk.Label(body, text="Create for").grid(row=5, column=0, sticky="w")
-        buttons = ttk.Frame(body); buttons.grid(row=5, column=1, sticky="w", pady=8)
+        ttk.Label(body, text="Create for").grid(row=6, column=0, sticky="w")
+        buttons = ttk.Frame(body); buttons.grid(row=6, column=1, sticky="w", pady=8)
 
         def create_for(target: date | None) -> None:
             try:
-                values = {key.lower(): widget.get().strip() for key, widget in inputs.items() if isinstance(widget, ttk.Combobox)}
+                values = {key.lower(): inputs[key].get().strip() for key in ("Category", "Reference", "Assigned")}
                 values["task"] = inputs["Task"].get("1.0", "end").strip(); values["details"] = inputs["Details"].get("1.0", "end").strip()
+                parent_index = parent.current()
+                if parent_index > 0: values["tags"] = {"parent": parent_tasks[parent_index - 1].id}
                 self.store.create(Task.new(user=self.config.user, target=target, **values))
                 self.config.remember(values["category"], values["reference"], values["assigned"]); self.config.save()
                 window.destroy(); self.refresh()
@@ -271,7 +325,7 @@ class TaskrApp(ttk.Frame):
             ttk.Button(buttons, text=name, command=lambda n=name: create_for(target_date(n))).pack(side="left")
         ttk.Button(buttons, text="Future date…", command=future).pack(side="left")
         ttk.Button(buttons, text="No date", command=lambda: create_for(None)).pack(side="left")
-        ttk.Label(body, text="Selecting a date creates the task.").grid(row=6, column=1, sticky="w")
+        ttk.Label(body, text="Selecting a date creates the task.").grid(row=7, column=1, sticky="w")
         body.columnconfigure(1, weight=1)
 
     def refresh(self) -> None:

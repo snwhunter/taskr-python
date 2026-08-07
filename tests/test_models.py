@@ -1,9 +1,9 @@
-from datetime import date
+from datetime import date, datetime
 import json
 
 import pytest
 
-from taskr.app import add_task_filter_value, target_date, task_matches, window_title
+from taskr.app import appended_note, add_task_filter_value, target_date, task_matches, window_title
 from taskr.models.task import TASK_COLUMNS, Status, Task
 from taskr.storage.config import ViewConfig
 
@@ -61,3 +61,8 @@ def test_new_task_merges_parent_with_provenance_tags():
     task = Task.new(user="alex", task="Child", tags={"parent": "parent-id"})
     assert task.tags["parent"] == "parent-id"
     assert task.tags["created_by"] == "alex"
+
+
+def test_appended_note_adds_user_and_datestamp_without_replacing_existing_note():
+    result = appended_note("Original", "Follow-up", "alex", datetime(2026, 8, 7, 14, 5))
+    assert result == "Original\n[alex 2026-08-07 14:05] Follow-up"

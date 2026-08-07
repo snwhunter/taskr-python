@@ -81,8 +81,12 @@ Status, and Notes and provenance in Tags.
 The app starts with five task views. The **+ View**, **− View**, and **Rename**
 controls are grouped across the top. Click the dropdown marker in any table
 heading to search and select that column's visible values; filters from multiple
-columns are combined. Each tab's name and column selections are remembered in
-`config.json`. Double-click a table cell to edit it, or select a row and use
+columns are combined. Use **Columns…** to show or hide fields independently in
+each view. Each tab's name, visible columns, and filter selections are remembered
+in `config.json`. Select multiple rows and use **Edit selected…** to apply the
+same field edit to all selected tasks. Notes editing offers separate **Replace note** and
+**Append edit** actions; appended text is prefixed with the user and timestamp.
+Select a row and use
 **Complete task**. **Set parent…** stores the selected parent ID in the child's
 `Tags` object. A parent can be chosen from its row or the pull-down, and visible
 children are nested below their parent. Task, Details, and Notes remain

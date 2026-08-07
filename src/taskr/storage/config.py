@@ -8,6 +8,22 @@ import os
 from pathlib import Path
 
 
+@dataclass(slots=True)
+class ViewConfig:
+    """The persisted name and filters for one task view."""
+
+    name: str = "View"
+    category: str = ""
+    reference: str = ""
+    date_from: str = ""
+    date_to: str = ""
+    status: str = ""
+
+
+def default_views() -> list[ViewConfig]:
+    return [ViewConfig(name=f"View {number}") for number in range(1, 6)]
+
+
 def default_path() -> Path:
     return Path(os.environ.get("TASKR_CONFIG", Path.home() / ".config/taskr/config.json"))
 
@@ -19,6 +35,7 @@ class AppConfig:
     categories: list[str] = field(default_factory=list)
     references: list[str] = field(default_factory=list)
     assigned: list[str] = field(default_factory=list)
+    views: list[ViewConfig] = field(default_factory=default_views)
 
     @classmethod
     def load(cls, path: Path | None = None) -> AppConfig:
@@ -26,10 +43,14 @@ class AppConfig:
         data = json.loads(path.read_text()) if path.exists() else {}
         data["api_url"] = os.environ.get("TASKR_API_URL", data.get("api_url", ""))
         data["user"] = os.environ.get("TASKR_USER", data.get("user", ""))
+        raw_views = data.get("views")
+        views = ([ViewConfig(**view) for view in raw_views]
+                 if isinstance(raw_views, list) else default_views())
         return cls(
             api_url=data.get("api_url", ""), user=data.get("user", ""),
             categories=list(data.get("categories", [])), references=list(data.get("references", [])),
             assigned=list(data.get("assigned", [])),
+            views=views,
         )
 
     def remember(self, category: str, reference: str, assigned: str) -> None:

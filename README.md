@@ -5,6 +5,9 @@ receives Google credentials: it calls a spreadsheet-bound Google Apps Script web
 app over HTTPS. No local task database is used. Only non-secret preferences and
 autocomplete history are stored locally.
 
+The window title includes a launch version in `YYMMDDHHmmSS` format, making the
+running instance straightforward to identify in screenshots and support notes.
+
 ## Existing architecture audit
 
 Before this implementation the repository had **no Apps Script code, web-app
@@ -64,10 +67,18 @@ Alternatively create `~/.config/taskr/config.json`:
 }
 ```
 
-The Load tab keeps Category, Reference, and Assigned after creation and clears
-Task and Details. Those three histories are saved to that config file for the
+Use **Add Tasks** to open the task-entry popup. There is no separate submit
+button: selecting EOD, EOW, EOM, a future date, or no date creates the task.
+Category, Reference, and Assigned histories are saved to the config file for the
 editable autocomplete boxes. Newly created tasks have blank Priority, Status,
-and Notes and provenance in Tags. The View tab supports Category, Reference, and
-inclusive Target-date filters. Tasks with blank Target always remain visible.
-Double-click a table cell to edit it; Tags is deliberately hidden. Select a row
-and use **Complete task** to apply the existing `Complete` status.
+and Notes and provenance in Tags.
+
+The app starts with five task views. Add/remove views, rename each tab, and set
+independent Category, Reference, inclusive Target-date, and Status filters. Tab
+names and filters are remembered in `config.json`. Tasks with blank Target remain
+visible through date filtering. Like Excel filters, each drop-down only offers
+values that remain available after applying the other filters in that view.
+Double-click a table cell to edit it, or select a
+row and use **Complete task**. **Set parent…** stores the selected parent ID in
+the child's `Tags` object; visible children are nested below their parent and
+shown in italics.

@@ -16,6 +16,7 @@ def test_five_default_views_and_view_configuration_are_persisted(tmp_path):
     path = tmp_path / "config.json"
     config = AppConfig()
     assert [view.name for view in config.views] == [f"View {number}" for number in range(1, 6)]
-    config.views = [ViewConfig(name="My work", category="Work", status="Blocked")]
+    config.views = [ViewConfig(name="My work", category="Work", status="Blocked",
+                               column_filters={"Assigned": ["Me", "Sam"], "Priority": ["High"]})]
     config.save(path)
     assert AppConfig.load(path).views == config.views

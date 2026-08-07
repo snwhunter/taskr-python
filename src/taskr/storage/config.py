@@ -18,6 +18,9 @@ class ViewConfig:
     date_from: str = ""
     date_to: str = ""
     status: str = ""
+    # Keys are sheet column names and values are the values checked in that
+    # column's table filter.  Missing keys mean that the column is unfiltered.
+    column_filters: dict[str, list[str]] = field(default_factory=dict)
 
 
 def default_views() -> list[ViewConfig]:

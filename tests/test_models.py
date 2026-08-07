@@ -38,3 +38,12 @@ def test_configured_view_filters_and_parent_tag_round_trip():
     assert Task.from_record(task.to_record()).tags["parent"] == "parent-id"
     view.status = "Complete"
     assert not task_matches(task, view)
+
+
+def test_column_filters_are_combined_and_support_blank_values():
+    task = Task(id="1", task="Ship", assigned="Sam", priority="", status=Status.BLOCKED)
+    assert task_matches(task, ViewConfig(column_filters={
+        "Assigned": ["Sam", "Lee"], "Priority": [""], "Status": ["Blocked"],
+    }))
+    assert not task_matches(task, ViewConfig(column_filters={"Assigned": ["Lee"]}))
+    assert not task_matches(task, ViewConfig(column_filters={"Priority": []}))

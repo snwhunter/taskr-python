@@ -5,12 +5,15 @@ from __future__ import annotations
 import calendar
 from dataclasses import replace
 from datetime import date, timedelta
+import queue
+import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from taskr.models.task import Status, Task, VISIBLE_COLUMNS, creation_timestamp_id
 from taskr.storage.apps_script import AppsScriptTaskStore
-from taskr.storage.config import AppConfig, ViewConfig
+from taskr.storage.config import AppConfig, ViewConfig, default_cache_path
+from taskr.storage.sqlite import SQLiteTaskStore
 
 
 # A launch/build-style version keeps the lightweight desktop client free from a
@@ -246,7 +249,7 @@ class ParentTaskDialog(tk.Toplevel):
 
 
 class TaskrApp(ttk.Frame):
-    def __init__(self, master: tk.Tk, config: AppConfig, store: AppsScriptTaskStore) -> None:
+    def __init__(self, master: tk.Tk, config: AppConfig, store: SQLiteTaskStore) -> None:
         super().__init__(master, padding=10); self.pack(fill="both", expand=True)
         self.config, self.store, self.tasks = config, store, []
         master.title(window_title()); master.geometry("1180x650")
@@ -255,6 +258,8 @@ class TaskrApp(ttk.Frame):
         ttk.Button(toolbar, text="+ View", command=self.add_view).pack(side="left", padx=6)
         ttk.Button(toolbar, text="− View", command=self.remove_view).pack(side="left")
         ttk.Button(toolbar, text="Rename", command=self.rename_view).pack(side="left", padx=6)
+        self.sync_text = tk.StringVar(value="Sync: checking…")
+        ttk.Label(toolbar, textvariable=self.sync_text).pack(side="right")
         self.tabs = ttk.Notebook(self); self.tabs.pack(fill="both", expand=True)
         self.views: list[ViewPane] = []
         for settings in config.views: self._append_view(settings)
@@ -332,13 +337,51 @@ class TaskrApp(ttk.Frame):
         try:
             self.tasks = self.store.list()
             for view in self.views: view.render()
+            state = self.store.state()
+            self.sync_text.set(f"Sync: {state.pending} pending" if state.pending else
+                               (f"Sync: last {state.last_sync.replace('T', ' ')[:19]} UTC"
+                                if state.last_sync else "Sync: never"))
+            self._start_sync()
         except Exception as error: messagebox.showerror("Load failed", str(error))
+
+    def _start_sync(self) -> None:
+        if getattr(self, "_syncing", False): return
+        self._syncing = True; self.sync_text.set("Sync: syncing…")
+        results: queue.Queue[Exception | None] = queue.Queue()
+
+        def work() -> None:
+            try:
+                self.store.sync()
+                results.put(None)
+            except Exception as error:
+                results.put(error)
+
+        def finished(error: Exception | None) -> None:
+            self._syncing = False
+            if error:
+                pending = self.store.state().pending
+                self.sync_text.set(f"Sync: offline ({pending} pending)")
+                return
+            self.tasks = self.store.list()
+            for view in self.views: view.render()
+            state = self.store.state()
+            self.sync_text.set(f"Sync: last {state.last_sync.replace('T', ' ')[:19]} UTC")
+            if state.pending: self._start_sync()
+
+        def poll() -> None:
+            try: result = results.get_nowait()
+            except queue.Empty: self.after(50, poll)
+            else: finished(result)
+
+        threading.Thread(target=work, name="taskr-sync", daemon=True).start()
+        self.after(50, poll)
 
 
 def main() -> None:
     config = AppConfig.load()
     if not config.api_url: raise SystemExit("Set TASKR_API_URL or api_url in ~/.config/taskr/config.json")
-    root = tk.Tk(); TaskrApp(root, config, AppsScriptTaskStore(config.api_url)); root.mainloop()
+    remote = AppsScriptTaskStore(config.api_url)
+    root = tk.Tk(); TaskrApp(root, config, SQLiteTaskStore(default_cache_path(), remote)); root.mainloop()
 
 
 if __name__ == "__main__": main()

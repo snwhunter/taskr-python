@@ -38,37 +38,70 @@ def task_matches(task: Task, view: ViewConfig) -> bool:
         end = date.fromisoformat(view.date_to) if view.date_to else None
     except ValueError as error:
         raise ValueError("Dates must use YYYY-MM-DD.") from error
-    return not (
+    if (
         (view.category and task.category != view.category)
         or (view.reference and task.reference != view.reference)
         or (view.status and task.status.value != view.status)
         or (task.target and ((start and task.target < start) or (end and task.target > end)))
-    )
+    ):
+        return False
+    record = task.to_record()
+    return all(record.get(column, "") in selected
+               for column, selected in view.column_filters.items())
+
+
+class ColumnFilterDialog(tk.Toplevel):
+    """Spreadsheet-style, searchable checkbox filter for one table column."""
+
+    def __init__(self, parent: ViewPane, column: str, values: list[str], selected: list[str] | None) -> None:
+        super().__init__(parent)
+        self.parent, self.column, self.values = parent, column, values
+        self.title(f"Filter {column}"); self.transient(parent.winfo_toplevel()); self.grab_set()
+        self.resizable(False, True)
+        body = ttk.Frame(self, padding=12); body.pack(fill="both", expand=True)
+        self.search = tk.StringVar(); search = ttk.Entry(body, textvariable=self.search, width=34)
+        search.pack(fill="x", pady=(0, 8)); search.bind("<KeyRelease>", self._show)
+        self.listbox = tk.Listbox(body, selectmode="multiple", exportselection=False, height=12, width=38)
+        self.listbox.pack(fill="both", expand=True)
+        self.initial = set(values if selected is None else selected)
+        actions = ttk.Frame(body); actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(actions, text="OK", command=self.accept).pack(side="right", padx=(0, 8))
+        ttk.Button(actions, text="Select all", command=lambda: self.listbox.selection_set(0, "end")).pack(side="left")
+        ttk.Button(actions, text="Clear", command=lambda: self.listbox.selection_clear(0, "end")).pack(side="left", padx=4)
+        self._show(); search.focus_set()
+
+    def _show(self, _event: tk.Event | None = None) -> None:
+        # Retain selections while narrowing or widening the search.
+        if self.listbox.size():
+            displayed = list(self.listbox.get(0, "end"))
+            for index in self.listbox.curselection(): self.initial.add(displayed[index])
+            for index, value in enumerate(displayed):
+                if index not in self.listbox.curselection(): self.initial.discard(value)
+        needle = self.search.get().casefold()
+        self.listbox.delete(0, "end")
+        for value in (item for item in self.values if needle in item.casefold()):
+            self.listbox.insert("end", value)
+            if value in self.initial: self.listbox.selection_set("end")
+
+    def accept(self) -> None:
+        displayed = list(self.listbox.get(0, "end"))
+        for index, value in enumerate(displayed):
+            if index in self.listbox.curselection(): self.initial.add(value)
+            else: self.initial.discard(value)
+        self.parent.set_column_filter(self.column, sorted(self.initial, key=str.casefold))
+        self.destroy()
 
 
 class ViewPane(ttk.Frame):
     def __init__(self, app: TaskrApp, notebook: ttk.Notebook, settings: ViewConfig) -> None:
         super().__init__(notebook, padding=8)
         self.app, self.settings = app, settings
-        filters = ttk.Frame(self); filters.pack(fill="x")
-        choices = (
-            ("Category", "category", app.config.categories),
-            ("Reference", "reference", app.config.references),
-            ("From", "date_from", ()), ("To", "date_to", ()),
-            ("Status", "status", [item.value for item in Status]),
-        )
-        self.variables: dict[str, tk.StringVar] = {}
-        for label, field, values in choices:
-            ttk.Label(filters, text=label).pack(side="left")
-            variable = tk.StringVar(value=getattr(settings, field)); self.variables[field] = variable
-            widget = ttk.Combobox(filters, textvariable=variable, values=values, width=12)
-            widget.pack(side="left", padx=(2, 7)); widget.bind("<<ComboboxSelected>>", self.apply)
-            widget.bind("<Return>", self.apply); widget.bind("<FocusOut>", self.apply)
-        ttk.Button(filters, text="Rename", command=self.rename).pack(side="right")
         self.table = ttk.Treeview(self, columns=VISIBLE_COLUMNS, show="tree headings", selectmode="browse")
         self.table.heading("#0", text=""); self.table.column("#0", width=28, stretch=False)
         for name in VISIBLE_COLUMNS:
-            self.table.heading(name, text=name); self.table.column(name, width=100)
+            self.table.heading(name, text=name, command=lambda column=name: self.open_filter(column))
+            self.table.column(name, width=100)
         self.table.column("Task", width=220); self.table.pack(fill="both", expand=True, pady=8)
         self.table.tag_configure("child", font=("TkDefaultFont", 9, "italic"))
         self.table.bind("<Double-1>", self.edit_cell)
@@ -77,9 +110,23 @@ class ViewPane(ttk.Frame):
         ttk.Button(buttons, text="Set parent…", command=self.set_parent).pack(side="right")
         ttk.Button(buttons, text="Complete task", command=self.complete).pack(side="right", padx=6)
 
-    def apply(self, _event: tk.Event | None = None) -> None:
-        for field, variable in self.variables.items(): setattr(self.settings, field, variable.get().strip())
-        self.app.save_views(); self.render()
+    def open_filter(self, column: str) -> None:
+        values = sorted({task.to_record()[column] for task in self.app.tasks}, key=str.casefold)
+        selected = self.settings.column_filters.get(column)
+        ColumnFilterDialog(self, column, values, selected)
+
+    def set_column_filter(self, column: str, selected: list[str]) -> None:
+        all_values = {task.to_record()[column] for task in self.app.tasks}
+        if set(selected) == all_values:
+            self.settings.column_filters.pop(column, None)
+        else:
+            self.settings.column_filters[column] = selected
+        self.app.save_views(); self.render(); self.update_headings()
+
+    def update_headings(self) -> None:
+        for name in VISIBLE_COLUMNS:
+            marker = " ▼" if name in self.settings.column_filters else " ▾"
+            self.table.heading(name, text=name + marker)
 
     def rename(self) -> None:
         value = simpledialog.askstring("Rename view", "View name:", initialvalue=self.settings.name, parent=self)
@@ -87,6 +134,7 @@ class ViewPane(ttk.Frame):
             self.settings.name = value.strip(); self.app.tabs.tab(self, text=self.settings.name); self.app.save_views()
 
     def render(self) -> None:
+        self.update_headings()
         self.table.delete(*self.table.get_children())
         try: visible = [task for task in self.app.tasks if task_matches(task, self.settings)]
         except ValueError as error: messagebox.showerror("Invalid filter", str(error)); return
@@ -163,7 +211,8 @@ class TaskrApp(ttk.Frame):
         toolbar = ttk.Frame(self); toolbar.pack(fill="x", pady=(0, 8))
         ttk.Button(toolbar, text="Add Tasks", command=self.open_add_tasks).pack(side="left")
         ttk.Button(toolbar, text="+ View", command=self.add_view).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="Remove View", command=self.remove_view).pack(side="left")
+        ttk.Button(toolbar, text="− View", command=self.remove_view).pack(side="left")
+        ttk.Button(toolbar, text="Rename", command=self.rename_view).pack(side="left", padx=6)
         self.tabs = ttk.Notebook(self); self.tabs.pack(fill="both", expand=True)
         self.views: list[ViewPane] = []
         for settings in config.views: self._append_view(settings)
@@ -179,6 +228,9 @@ class TaskrApp(ttk.Frame):
     def remove_view(self) -> None:
         if len(self.views) == 1: messagebox.showinfo("Remove view", "At least one view is required."); return
         index = self.tabs.index("current"); self.tabs.forget(index); self.views.pop(index); self.config.views.pop(index); self.save_views()
+
+    def rename_view(self) -> None:
+        self.views[self.tabs.index("current")].rename()
 
     def save_views(self) -> None:
         try: self.config.save()

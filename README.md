@@ -73,10 +73,11 @@ Category, Reference, and Assigned histories are saved to the config file for the
 editable autocomplete boxes. Newly created tasks have blank Priority, Status,
 and Notes and provenance in Tags.
 
-The app starts with five task views. Add/remove views, rename each tab, and set
-independent Category, Reference, inclusive Target-date, and Status filters. Tab
-names and filters are remembered in `config.json`. Tasks with blank Target remain
-visible through date filtering. Double-click a table cell to edit it, or select a
-row and use **Complete task**. **Set parent…** stores the selected parent ID in
-the child's `Tags` object; visible children are nested below their parent and
-shown in italics.
+The app starts with five task views. The **+ View**, **− View**, and **Rename**
+controls are grouped across the top. Click the dropdown marker in any table
+heading to search and select that column's visible values; filters from multiple
+columns are combined. Each tab's name and column selections are remembered in
+`config.json`. Double-click a table cell to edit it, or select a row and use
+**Complete task**. **Set parent…** stores the selected parent ID in the child's
+`Tags` object; visible children are nested below their parent and shown in
+italics.
